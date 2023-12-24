@@ -1,38 +1,34 @@
 EXTRA_CFLAGS += $(USER_EXTRA_CFLAGS)
 EXTRA_CFLAGS += -O1
 #EXTRA_CFLAGS += -O3
-EXTRA_CFLAGS += -Wall -Wno-error
-EXTRA_CFLAGS += -Wextra
+#EXTRA_CFLAGS += -Wall
+#EXTRA_CFLAGS += -Wextra
+#EXTRA_CFLAGS += -Werror
+#EXTRA_CFLAGS += -pedantic
+#EXTRA_CFLAGS += -Wshadow -Wpointer-arith -Wcast-qual -Wstrict-prototypes -Wmissing-prototypes
+
+EXTRA_CFLAGS += -Wno-unused-variable
+#EXTRA_CFLAGS += -Wno-unused-value
+EXTRA_CFLAGS += -Wno-unused-label
+#EXTRA_CFLAGS += -Wno-unused-parameter
+#EXTRA_CFLAGS += -Wno-unused-function
+EXTRA_CFLAGS += -Wno-unused
+#EXTRA_CFLAGS += -Wno-uninitialized
+EXTRA_CFLAGS += -Wno-implicit-fallthrough
+
+# gcc-12
 EXTRA_CFLAGS += -Wno-address
-EXTRA_CFLAGS += -Wno-stringop-overread
 EXTRA_CFLAGS += -Wframe-larger-than=1648
+EXTRA_CFLAGS += -Wno-cast-function-type
+
+# gcc-13
+EXTRA_CFLAGS += -Wno-enum-int-mismatch
+EXTRA_CFLAGS += -Wno-stringop-overread
 EXTRA_CFLAGS += -Wno-enum-conversion
 EXTRA_CFLAGS += -Wno-int-in-bool-context
-EXTRA_CFLAGS += -Wno-discarded-qualifiers
-EXTRA_CFLAGS += -Wno-unused-variable
-EXTRA_CFLAGS += -Wno-unused-value
-EXTRA_CFLAGS += -Wno-unused-label
-EXTRA_CFLAGS += -Wno-unused-parameter
-EXTRA_CFLAGS += -Wno-unused-function
-EXTRA_CFLAGS += -Wno-unused
-EXTRA_CFLAGS += -Wno-cast-function-type
-EXTRA_CFLAGS += -Wno-date-time
-EXTRA_CFLAGS += -Wno-misleading-indentation
-EXTRA_CFLAGS += -Wno-uninitialized
-EXTRA_CFLAGS += -Wno-implicit-function-declaration
 
-# Relax some warnings from '-Wextra' so we won't get flooded with warnings
-EXTRA_CFLAGS += -Wno-sign-compare
-#EXTRA_CFLAGS += -Wno-missing-field-initializers
-EXTRA_CFLAGS += -Wno-type-limits
-# Consti10 openhd begin - relax some more warnings such that one can build with debug enabled
-EXTRA_CFLAGS += -Wno-implicit-fallthrough
-# Consti10 openhd end
-
-GCC_VER_49 := $(shell echo `$(CC) -dumpversion | cut -f1-2 -d.` \>= 4.9 | bc )
-ifeq ($(GCC_VER_49),1)
-EXTRA_CFLAGS += -Wno-date-time	# Fix compile error && warning on gcc 4.9 and later
-endif
+# uncomment to enable concurrent mode
+#EXTRA_CFLAGS += -DCONFIG_CONCURRENT_MODE
 
 EXTRA_CFLAGS += -I$(src)/include
 
