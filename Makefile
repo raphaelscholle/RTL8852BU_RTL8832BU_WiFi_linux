@@ -5,6 +5,9 @@ EXTRA_CFLAGS += -Wall -Wno-error
 EXTRA_CFLAGS += -Wextra
 EXTRA_CFLAGS += -Wno-address
 EXTRA_CFLAGS += -Wno-stringop-overread
+EXTRA_CFLAGS += -Wframe-larger-than=1648
+EXTRA_CFLAGS += -Wno-enum-conversion
+EXTRA_CFLAGS += -Wno-int-in-bool-context
 
 EXTRA_CFLAGS += -Wno-unused-variable
 EXTRA_CFLAGS += -Wno-unused-value
@@ -55,7 +58,7 @@ CONFIG_IPS_MODE = default
 CONFIG_LPS_MODE = default
 CONFIG_BTC = y
 CONFIG_WAPI_SUPPORT = n
-CONFIG_EFUSE_CONFIG_FILE = y
+CONFIG_EFUSE_CONFIG_FILE = n
 CONFIG_EXT_CLK = n
 CONFIG_TRAFFIC_PROTECT = n
 CONFIG_LOAD_PHY_PARA_FROM_FILE = y
