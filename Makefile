@@ -1,19 +1,28 @@
 EXTRA_CFLAGS += $(USER_EXTRA_CFLAGS)
 EXTRA_CFLAGS += -O1
 #EXTRA_CFLAGS += -O3
-#EXTRA_CFLAGS += -Wall
-#EXTRA_CFLAGS += -Wextra
-#EXTRA_CFLAGS += -Werror
-#EXTRA_CFLAGS += -pedantic
-#EXTRA_CFLAGS += -Wshadow -Wpointer-arith -Wcast-qual -Wstrict-prototypes -Wmissing-prototypes
+EXTRA_CFLAGS += -Wall -Wno-error
+EXTRA_CFLAGS += -Wextra
+EXTRA_CFLAGS += -Wno-address
+EXTRA_CFLAGS += -Wno-stringop-overread
 
 EXTRA_CFLAGS += -Wno-unused-variable
-#EXTRA_CFLAGS += -Wno-unused-value
+EXTRA_CFLAGS += -Wno-unused-value
 EXTRA_CFLAGS += -Wno-unused-label
-#EXTRA_CFLAGS += -Wno-unused-parameter
-#EXTRA_CFLAGS += -Wno-unused-function
+EXTRA_CFLAGS += -Wno-unused-parameter
+EXTRA_CFLAGS += -Wno-unused-function
 EXTRA_CFLAGS += -Wno-unused
-#EXTRA_CFLAGS += -Wno-uninitialized
+EXTRA_CFLAGS += -Wno-cast-function-type
+EXTRA_CFLAGS += -Wno-date-time
+EXTRA_CFLAGS += -Wno-misleading-indentation
+EXTRA_CFLAGS += -Wno-uninitialized
+# Relax some warnings from '-Wextra' so we won't get flooded with warnings
+EXTRA_CFLAGS += -Wno-sign-compare
+#EXTRA_CFLAGS += -Wno-missing-field-initializers
+EXTRA_CFLAGS += -Wno-type-limits
+# Consti10 openhd begin - relax some more warnings such that one can build with debug enabled
+EXTRA_CFLAGS += -Wno-implicit-fallthrough
+# Consti10 openhd end
 
 GCC_VER_49 := $(shell echo `$(CC) -dumpversion | cut -f1-2 -d.` \>= 4.9 | bc )
 ifeq ($(GCC_VER_49),1)
@@ -32,14 +41,14 @@ CONFIG_RTL8852B = y
 CONFIG_RTL8852C = n
 ######################### Interface ###########################
 CONFIG_USB_HCI = y
-CONFIG_PCI_HCI = n
-CONFIG_SDIO_HCI = n
+CONFIG_PCI_HCI = y
+CONFIG_SDIO_HCI = y
 CONFIG_GSPI_HCI = n
 ########################## Features ###########################
 CONFIG_MP_INCLUDED = y
 CONFIG_CONCURRENT_MODE = n
 CONFIG_POWER_SAVING = n
-CONFIG_POWER_SAVE = y
+CONFIG_POWER_SAVE = n
 CONFIG_IPS_MODE = default
 CONFIG_LPS_MODE = default
 CONFIG_BTC = y
@@ -48,12 +57,14 @@ CONFIG_EFUSE_CONFIG_FILE = y
 CONFIG_EXT_CLK = n
 CONFIG_TRAFFIC_PROTECT = n
 CONFIG_LOAD_PHY_PARA_FROM_FILE = y
+CONFIG_CALIBRATE_TX_POWER_BY_REGULATORY = n
+CONFIG_CALIBRATE_TX_POWER_TO_MAX = y
 # Remember to set CONFIG_FILE_FWIMG when set CONFIG_FILE_FWIMG to y,
 # or driver will fail on ifconfig up because can't find firmware file
 CONFIG_FILE_FWIMG = n
-CONFIG_TXPWR_BY_RATE = y
-CONFIG_TXPWR_BY_RATE_EN = auto
-CONFIG_TXPWR_LIMIT = y
+CONFIG_TXPWR_BY_RATE = n
+CONFIG_TXPWR_BY_RATE_EN = n
+CONFIG_TXPWR_LIMIT = n
 CONFIG_TXPWR_LIMIT_EN = n
 CONFIG_RTW_CHPLAN = 0xFFFF
 CONFIG_RTW_ADAPTIVITY_EN = disable
@@ -64,7 +75,7 @@ CONFIG_80211W = y
 CONFIG_REDUCE_TX_CPU_LOADING = n
 CONFIG_BR_EXT = y
 CONFIG_TDLS = n
-CONFIG_WIFI_MONITOR = n
+CONFIG_WIFI_MONITOR = y
 CONFIG_MCC_MODE = n
 CONFIG_APPEND_VENDOR_IE_ENABLE = n
 CONFIG_RTW_NAPI = y
@@ -109,7 +120,7 @@ endif
 CONFIG_RTW_DEBUG = y
 # default log level is _DRV_INFO_ = 4,
 # please refer to "How_to_set_driver_debug_log_level.doc" to set the available level.
-CONFIG_RTW_LOG_LEVEL = 4
+CONFIG_RTW_LOG_LEVEL = 3
 
 # enable /proc/net/rtlxxxx/ debug interfaces
 CONFIG_PROC_DEBUG = y
