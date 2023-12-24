@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- * Copyright(c) 2019 Realtek Corporation.
+ * Copyright(c) 2007 - 2019 Realtek Corporation.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of version 2 of the GNU General Public License as
@@ -12,931 +12,1203 @@
  * more details.
  *
  *****************************************************************************/
-#define _OSDEP_SERVICE_LINUX_C_
+#define _OSDEP_SERVICE_C_
+
 #include <drv_types.h>
 
-#ifdef DBG_MEMORY_LEAK
-ATOMIC_T _malloc_cnt = ATOMIC_INIT(0);
-ATOMIC_T _malloc_size = ATOMIC_INIT(0);
-#endif /* DBG_MEMORY_LEAK */
-
-/*
-* Translate the OS dependent @param error_code to OS independent RTW_STATUS_CODE
-* @return: one of RTW_STATUS_CODE
-*/
-inline int RTW_STATUS_CODE(int error_code)
+#ifdef CONFIG_HWSIM
+#include "rtw_hwsim_intf.h"
+inline int _rtw_netif_rx(_nic_hdl ndev, struct sk_buff *skb)
 {
-	if (error_code >= 0)
-		return _SUCCESS;
+	skb->dev = ndev;
+	rtw_hwsim_medium_pre_netif_rx(skb);
+	return netif_rx(skb);
+}
+#endif /* CONFIG_HWSIM */
 
-	switch (error_code) {
-	/* case -ETIMEDOUT: */
-	/*	return RTW_STATUS_TIMEDOUT; */
-	default:
-		return _FAIL;
+u32 rtw_atoi(u8 *s)
+{
+
+	int num = 0, flag = 0;
+	int i;
+	for (i = 0; i <= strlen(s); i++) {
+		if (s[i] >= '0' && s[i] <= '9')
+			num = num * 10 + s[i] - '0';
+		else if (s[0] == '-' && i == 0)
+			flag = 1;
+		else
+			break;
 	}
+
+	if (flag == 1)
+		num = num * -1;
+
+	return num;
+
 }
 
-void _rtw_skb_queue_purge(struct sk_buff_head *list)
+#if defined(DBG_MEM_ALLOC)
+
+struct rtw_mem_stat {
+	ATOMIC_T alloc; /* the memory bytes we allocate currently */
+	ATOMIC_T peak; /* the peak memory bytes we allocate */
+	ATOMIC_T alloc_cnt; /* the alloc count for alloc currently */
+	ATOMIC_T alloc_err_cnt; /* the error times we fail to allocate memory */
+};
+
+struct rtw_mem_stat rtw_mem_type_stat[mstat_tf_idx(MSTAT_TYPE_MAX)];
+#ifdef RTW_MEM_FUNC_STAT
+struct rtw_mem_stat rtw_mem_func_stat[mstat_ff_idx(MSTAT_FUNC_MAX)];
+#endif
+
+char *MSTAT_TYPE_str[] = {
+	"VIR",
+	"PHY",
+	"SKB",
+	"USB",
+};
+
+#ifdef RTW_MEM_FUNC_STAT
+char *MSTAT_FUNC_str[] = {
+	"UNSP",
+	"IO",
+	"TXIO",
+	"RXIO",
+	"TX",
+	"RX",
+};
+#endif
+
+void rtw_mstat_dump(void *sel)
+{
+	int i;
+	int value_t[4][mstat_tf_idx(MSTAT_TYPE_MAX)];
+#ifdef RTW_MEM_FUNC_STAT
+	int value_f[4][mstat_ff_idx(MSTAT_FUNC_MAX)];
+#endif
+
+	for (i = 0; i < mstat_tf_idx(MSTAT_TYPE_MAX); i++) {
+		value_t[0][i] = ATOMIC_READ(&(rtw_mem_type_stat[i].alloc));
+		value_t[1][i] = ATOMIC_READ(&(rtw_mem_type_stat[i].peak));
+		value_t[2][i] = ATOMIC_READ(&(rtw_mem_type_stat[i].alloc_cnt));
+		value_t[3][i] = ATOMIC_READ(&(rtw_mem_type_stat[i].alloc_err_cnt));
+	}
+
+#ifdef RTW_MEM_FUNC_STAT
+	for (i = 0; i < mstat_ff_idx(MSTAT_FUNC_MAX); i++) {
+		value_f[0][i] = ATOMIC_READ(&(rtw_mem_func_stat[i].alloc));
+		value_f[1][i] = ATOMIC_READ(&(rtw_mem_func_stat[i].peak));
+		value_f[2][i] = ATOMIC_READ(&(rtw_mem_func_stat[i].alloc_cnt));
+		value_f[3][i] = ATOMIC_READ(&(rtw_mem_func_stat[i].alloc_err_cnt));
+	}
+#endif
+
+	RTW_PRINT_SEL(sel, "===================== MSTAT =====================\n");
+	RTW_PRINT_SEL(sel, "%4s %10s %10s %10s %10s\n", "TAG", "alloc", "peak", "aloc_cnt", "err_cnt");
+	RTW_PRINT_SEL(sel, "-------------------------------------------------\n");
+	for (i = 0; i < mstat_tf_idx(MSTAT_TYPE_MAX); i++)
+		RTW_PRINT_SEL(sel, "%4s %10d %10d %10d %10d\n", MSTAT_TYPE_str[i], value_t[0][i], value_t[1][i], value_t[2][i], value_t[3][i]);
+#ifdef RTW_MEM_FUNC_STAT
+	RTW_PRINT_SEL(sel, "-------------------------------------------------\n");
+	for (i = 0; i < mstat_ff_idx(MSTAT_FUNC_MAX); i++)
+		RTW_PRINT_SEL(sel, "%4s %10d %10d %10d %10d\n", MSTAT_FUNC_str[i], value_f[0][i], value_f[1][i], value_f[2][i], value_f[3][i]);
+#endif
+}
+
+void rtw_mstat_update(const enum mstat_f flags, const MSTAT_STATUS status, u32 sz)
+{
+	static systime update_time = 0;
+	int peak, alloc;
+	int i;
+
+	/* initialization */
+	if (!update_time) {
+		for (i = 0; i < mstat_tf_idx(MSTAT_TYPE_MAX); i++) {
+			ATOMIC_SET(&(rtw_mem_type_stat[i].alloc), 0);
+			ATOMIC_SET(&(rtw_mem_type_stat[i].peak), 0);
+			ATOMIC_SET(&(rtw_mem_type_stat[i].alloc_cnt), 0);
+			ATOMIC_SET(&(rtw_mem_type_stat[i].alloc_err_cnt), 0);
+		}
+		#ifdef RTW_MEM_FUNC_STAT
+		for (i = 0; i < mstat_ff_idx(MSTAT_FUNC_MAX); i++) {
+			ATOMIC_SET(&(rtw_mem_func_stat[i].alloc), 0);
+			ATOMIC_SET(&(rtw_mem_func_stat[i].peak), 0);
+			ATOMIC_SET(&(rtw_mem_func_stat[i].alloc_cnt), 0);
+			ATOMIC_SET(&(rtw_mem_func_stat[i].alloc_err_cnt), 0);
+		}
+		#endif
+	}
+
+	switch (status) {
+	case MSTAT_ALLOC_SUCCESS:
+		ATOMIC_INC(&(rtw_mem_type_stat[mstat_tf_idx(flags)].alloc_cnt));
+		alloc = ATOMIC_ADD_RETURN(&(rtw_mem_type_stat[mstat_tf_idx(flags)].alloc), sz);
+		peak = ATOMIC_READ(&(rtw_mem_type_stat[mstat_tf_idx(flags)].peak));
+		if (peak < alloc)
+			ATOMIC_SET(&(rtw_mem_type_stat[mstat_tf_idx(flags)].peak), alloc);
+
+		#ifdef RTW_MEM_FUNC_STAT
+		ATOMIC_INC(&(rtw_mem_func_stat[mstat_ff_idx(flags)].alloc_cnt));
+		alloc = ATOMIC_ADD_RETURN(&(rtw_mem_func_stat[mstat_ff_idx(flags)].alloc), sz);
+		peak = ATOMIC_READ(&(rtw_mem_func_stat[mstat_ff_idx(flags)].peak));
+		if (peak < alloc)
+			ATOMIC_SET(&(rtw_mem_func_stat[mstat_ff_idx(flags)].peak), alloc);
+		#endif
+		break;
+
+	case MSTAT_ALLOC_FAIL:
+		ATOMIC_INC(&(rtw_mem_type_stat[mstat_tf_idx(flags)].alloc_err_cnt));
+		#ifdef RTW_MEM_FUNC_STAT
+		ATOMIC_INC(&(rtw_mem_func_stat[mstat_ff_idx(flags)].alloc_err_cnt));
+		#endif
+		break;
+
+	case MSTAT_FREE:
+		ATOMIC_DEC(&(rtw_mem_type_stat[mstat_tf_idx(flags)].alloc_cnt));
+		ATOMIC_SUB(&(rtw_mem_type_stat[mstat_tf_idx(flags)].alloc), sz);
+		#ifdef RTW_MEM_FUNC_STAT
+		ATOMIC_DEC(&(rtw_mem_func_stat[mstat_ff_idx(flags)].alloc_cnt));
+		ATOMIC_SUB(&(rtw_mem_func_stat[mstat_ff_idx(flags)].alloc), sz);
+		#endif
+		break;
+	};
+
+	/* if (rtw_get_passing_time_ms(update_time) > 5000) { */
+	/*	rtw_mstat_dump(RTW_DBGDUMP); */
+	update_time = rtw_get_current_time();
+	/* } */
+}
+
+#ifndef SIZE_MAX
+#define SIZE_MAX (~(size_t)0)
+#endif
+
+struct mstat_sniff_rule {
+	enum mstat_f flags;
+	size_t lb;
+	size_t hb;
+};
+
+struct mstat_sniff_rule mstat_sniff_rules[] = {
+//	{MSTAT_TYPE_VIR, 32, 32},
+};
+
+int mstat_sniff_rule_num = sizeof(mstat_sniff_rules) / sizeof(struct mstat_sniff_rule);
+
+bool match_mstat_sniff_rules(const enum mstat_f flags, const size_t size)
+{
+	int i;
+	for (i = 0; i < mstat_sniff_rule_num; i++) {
+		if (mstat_sniff_rules[i].flags == flags
+			&& mstat_sniff_rules[i].lb <= size
+			&& mstat_sniff_rules[i].hb >= size)
+			return _TRUE;
+	}
+
+	return _FALSE;
+}
+
+inline void *dbg_rtw_vmalloc(u32 sz, const enum mstat_f flags, const char *func, const int line)
+{
+	void *p;
+
+	if (match_mstat_sniff_rules(flags, sz))
+		RTW_INFO("DBG_MEM_ALLOC %s:%d %s(%d)\n", func, line, __FUNCTION__, (sz));
+
+	p = _rtw_vmalloc((sz));
+
+	rtw_mstat_update(
+		flags
+		, p ? MSTAT_ALLOC_SUCCESS : MSTAT_ALLOC_FAIL
+		, sz
+	);
+
+	return p;
+}
+
+inline void *dbg_rtw_zvmalloc(u32 sz, const enum mstat_f flags, const char *func, const int line)
+{
+	void *p;
+
+	if (match_mstat_sniff_rules(flags, sz))
+		RTW_INFO("DBG_MEM_ALLOC %s:%d %s(%d)\n", func, line, __FUNCTION__, (sz));
+
+	p = _rtw_zvmalloc((sz));
+
+	rtw_mstat_update(
+		flags
+		, p ? MSTAT_ALLOC_SUCCESS : MSTAT_ALLOC_FAIL
+		, sz
+	);
+
+	return p;
+}
+
+inline void dbg_rtw_vmfree(void *pbuf, u32 sz, const enum mstat_f flags, const char *func, const int line)
+{
+
+	if (match_mstat_sniff_rules(flags, sz))
+		RTW_INFO("DBG_MEM_ALLOC %s:%d %s(%d)\n", func, line, __FUNCTION__, (sz));
+
+	_rtw_vmfree((pbuf), (sz));
+
+	rtw_mstat_update(
+		flags
+		, MSTAT_FREE
+		, sz
+	);
+}
+
+inline void *dbg_rtw_malloc(u32 sz, const enum mstat_f flags, const char *func, const int line)
+{
+	void *p;
+
+	if (match_mstat_sniff_rules(flags, sz))
+		RTW_INFO("DBG_MEM_ALLOC %s:%d %s(%d)\n", func, line, __FUNCTION__, (sz));
+
+	p = _rtw_malloc((sz));
+
+	rtw_mstat_update(
+		flags
+		, p ? MSTAT_ALLOC_SUCCESS : MSTAT_ALLOC_FAIL
+		, sz
+	);
+
+	return p;
+}
+
+inline void *dbg_rtw_zmalloc(u32 sz, const enum mstat_f flags, const char *func, const int line)
+{
+	void *p;
+
+	if (match_mstat_sniff_rules(flags, sz))
+		RTW_INFO("DBG_MEM_ALLOC %s:%d %s(%d)\n", func, line, __FUNCTION__, (sz));
+
+	p = _rtw_zmalloc((sz));
+
+	rtw_mstat_update(
+		flags
+		, p ? MSTAT_ALLOC_SUCCESS : MSTAT_ALLOC_FAIL
+		, sz
+	);
+
+	return p;
+}
+
+inline void dbg_rtw_mfree(void *pbuf, u32 sz, const enum mstat_f flags, const char *func, const int line)
+{
+	if (match_mstat_sniff_rules(flags, sz))
+		RTW_INFO("DBG_MEM_ALLOC %s:%d %s(%d)\n", func, line, __FUNCTION__, (sz));
+
+	_rtw_mfree((pbuf), (sz));
+
+	rtw_mstat_update(
+		flags
+		, MSTAT_FREE
+		, sz
+	);
+}
+
+inline void dbg_rtw_skb_mstat_aid(struct sk_buff *skb_head, const enum mstat_f flags, enum mstat_status status)
+{
+	unsigned int truesize = 0;
+	struct sk_buff *skb;
+
+	if (!skb_head)
+		return;
+
+	rtw_mstat_update(flags, status, skb_head->truesize);
+
+	skb_walk_frags(skb_head, skb)
+		rtw_mstat_update(flags, status, skb->truesize);
+}
+
+inline struct sk_buff *dbg_rtw_skb_alloc(unsigned int size, const enum mstat_f flags, const char *func, int line)
+{
+	struct sk_buff *skb;
+	unsigned int truesize = 0;
+
+	skb = _rtw_skb_alloc(size);
+
+	if (skb)
+		truesize = skb->truesize;
+
+	if (!skb || truesize < size || match_mstat_sniff_rules(flags, truesize))
+		RTW_INFO("DBG_MEM_ALLOC %s:%d %s(%d), skb:%p, truesize=%u\n", func, line, __FUNCTION__, size, skb, truesize);
+
+	rtw_mstat_update(
+		flags
+		, skb ? MSTAT_ALLOC_SUCCESS : MSTAT_ALLOC_FAIL
+		, truesize
+	);
+
+	return skb;
+}
+
+inline void dbg_rtw_skb_free(struct sk_buff *skb, const enum mstat_f flags, const char *func, int line)
+{
+	unsigned int truesize = skb->truesize;
+
+	if (match_mstat_sniff_rules(flags, truesize))
+		RTW_INFO("DBG_MEM_ALLOC %s:%d %s, truesize=%u\n", func, line, __FUNCTION__, truesize);
+
+	dbg_rtw_skb_mstat_aid(skb, flags, MSTAT_FREE);
+
+	_rtw_skb_free(skb);
+}
+
+inline struct sk_buff *dbg_rtw_skb_copy(const struct sk_buff *skb, const enum mstat_f flags, const char *func, const int line)
+{
+	struct sk_buff *skb_cp;
+	unsigned int truesize = skb->truesize;
+	unsigned int cp_truesize = 0;
+
+	skb_cp = _rtw_skb_copy(skb);
+	if (skb_cp)
+		cp_truesize = skb_cp->truesize;
+
+	if (!skb_cp || cp_truesize < truesize || match_mstat_sniff_rules(flags, cp_truesize))
+		RTW_INFO("DBG_MEM_ALLOC %s:%d %s(%u), skb_cp:%p, cp_truesize=%u\n", func, line, __FUNCTION__, truesize, skb_cp, cp_truesize);
+
+	rtw_mstat_update(
+		flags
+		, skb_cp ? MSTAT_ALLOC_SUCCESS : MSTAT_ALLOC_FAIL
+		, cp_truesize
+	);
+
+	return skb_cp;
+}
+
+inline struct sk_buff *dbg_rtw_skb_clone(struct sk_buff *skb, const enum mstat_f flags, const char *func, const int line)
+{
+	struct sk_buff *skb_cl;
+	unsigned int truesize = skb->truesize;
+	unsigned int cl_truesize = 0;
+
+	skb_cl = _rtw_skb_clone(skb);
+	if (skb_cl)
+		cl_truesize = skb_cl->truesize;
+
+	if (!skb_cl || cl_truesize < truesize || match_mstat_sniff_rules(flags, cl_truesize))
+		RTW_INFO("DBG_MEM_ALLOC %s:%d %s(%u), skb_cl:%p, cl_truesize=%u\n", func, line, __FUNCTION__, truesize, skb_cl, cl_truesize);
+
+	rtw_mstat_update(
+		flags
+		, skb_cl ? MSTAT_ALLOC_SUCCESS : MSTAT_ALLOC_FAIL
+		, cl_truesize
+	);
+
+	return skb_cl;
+}
+
+inline int dbg_rtw_skb_linearize(struct sk_buff *skb, const enum mstat_f flags, const char *func, int line)
+{
+	unsigned int truesize = 0;
+	int ret;
+
+	dbg_rtw_skb_mstat_aid(skb, flags, MSTAT_FREE);
+
+	ret = _rtw_skb_linearize(skb);
+
+	dbg_rtw_skb_mstat_aid(skb, flags, MSTAT_ALLOC_SUCCESS);
+
+	return ret;
+}
+
+inline int dbg_rtw_netif_rx(_nic_hdl ndev, struct sk_buff *skb, const enum mstat_f flags, const char *func, int line)
+{
+	int ret;
+	unsigned int truesize = skb->truesize;
+
+	if (match_mstat_sniff_rules(flags, truesize))
+		RTW_INFO("DBG_MEM_ALLOC %s:%d %s, truesize=%u\n", func, line, __FUNCTION__, truesize);
+
+	ret = _rtw_netif_rx(ndev, skb);
+
+	rtw_mstat_update(
+		flags
+		, MSTAT_FREE
+		, truesize
+	);
+
+	return ret;
+}
+
+#ifdef CONFIG_RTW_NAPI
+inline int dbg_rtw_netif_receive_skb(_nic_hdl ndev, struct sk_buff *skb, const enum mstat_f flags, const char *func, int line)
+{
+	int ret;
+	unsigned int truesize = skb->truesize;
+
+	if (match_mstat_sniff_rules(flags, truesize))
+		RTW_INFO("DBG_MEM_ALLOC %s:%d %s, truesize=%u\n", func, line, __FUNCTION__, truesize);
+
+	ret = _rtw_netif_receive_skb(ndev, skb);
+
+	rtw_mstat_update(
+		flags
+		, MSTAT_FREE
+		, truesize
+	);
+
+	return ret;
+}
+
+#ifdef CONFIG_RTW_GRO
+inline gro_result_t dbg_rtw_napi_gro_receive(struct napi_struct *napi, struct sk_buff *skb, const enum mstat_f flags, const char *func, int line)
+{
+	int ret;
+	unsigned int truesize = skb->truesize;
+
+	if (match_mstat_sniff_rules(flags, truesize))
+		RTW_INFO("DBG_MEM_ALLOC %s:%d %s, truesize=%u\n", func, line, __FUNCTION__, truesize);
+
+	ret = _rtw_napi_gro_receive(napi, skb);
+
+	rtw_mstat_update(
+		flags
+		, MSTAT_FREE
+		, truesize
+	);
+
+	return ret;
+}
+#endif /* CONFIG_RTW_GRO */
+#endif /* CONFIG_RTW_NAPI */
+
+inline void dbg_rtw_skb_queue_purge(struct sk_buff_head *list, enum mstat_f flags, const char *func, int line)
 {
 	struct sk_buff *skb;
 
 	while ((skb = skb_dequeue(list)) != NULL)
-		_rtw_skb_free(skb);
+		dbg_rtw_skb_free(skb, flags, func, line);
 }
 
-void _rtw_memcpy(void *dst, const void *src, u32 sz)
+#ifdef CONFIG_USB_HCI
+inline void *dbg_rtw_usb_buffer_alloc(struct usb_device *dev, size_t size, dma_addr_t *dma, const enum mstat_f flags, const char *func, int line)
 {
-	memcpy(dst, src, sz);
+	void *p;
+
+	if (match_mstat_sniff_rules(flags, size))
+		RTW_INFO("DBG_MEM_ALLOC %s:%d %s(%zu)\n", func, line, __FUNCTION__, size);
+
+	p = _rtw_usb_buffer_alloc(dev, size, dma);
+
+	rtw_mstat_update(
+		flags
+		, p ? MSTAT_ALLOC_SUCCESS : MSTAT_ALLOC_FAIL
+		, size
+	);
+
+	return p;
 }
 
-inline void _rtw_memmove(void *dst, const void *src, u32 sz)
+inline void dbg_rtw_usb_buffer_free(struct usb_device *dev, size_t size, void *addr, dma_addr_t dma, const enum mstat_f flags, const char *func, int line)
 {
-	memmove(dst, src, sz);
-}
 
-int _rtw_memcmp(const void *dst, const void *src, u32 sz)
-{
-	/* under Linux/GNU/GLibc, the return value of memcmp for two same mem. chunk is 0 */
-	if (!(memcmp(dst, src, sz)))
-		return _TRUE;
-	else
-		return _FALSE;
-}
+	if (match_mstat_sniff_rules(flags, size))
+		RTW_INFO("DBG_MEM_ALLOC %s:%d %s(%zu)\n", func, line, __FUNCTION__, size);
 
-void _rtw_memset(void *pbuf, int c, u32 sz)
-{
-	memset(pbuf, c, sz);
-}
+	_rtw_usb_buffer_free(dev, size, addr, dma);
 
-void _rtw_init_listhead(_list *list)
-{
-	INIT_LIST_HEAD(list);
+	rtw_mstat_update(
+		flags
+		, MSTAT_FREE
+		, size
+	);
 }
-/*
-For the following list_xxx operations,
-caller must guarantee the atomic context.
-Otherwise, there will be racing condition.
-*/
-u32 rtw_is_list_empty(_list *phead)
-{
-	if (list_empty(phead))
-		return _TRUE;
-	else
-		return _FALSE;
-}
+#endif /* CONFIG_USB_HCI */
 
-void rtw_list_insert_head(_list *plist, _list *phead)
-{
-	list_add(plist, phead);
-}
+#endif /* defined(DBG_MEM_ALLOC) */
 
-void rtw_list_insert_tail(_list *plist, _list *phead)
+void *rtw_malloc2d(int h, int w, size_t size)
 {
-	list_add_tail(plist, phead);
-}
+	int j;
 
-inline void rtw_list_splice(_list *list, _list *head)
-{
-	list_splice(list, head);
-}
-
-inline void rtw_list_splice_init(_list *list, _list *head)
-{
-	list_splice_init(list, head);
-}
-
-inline void rtw_list_splice_tail(_list *list, _list *head)
-{
-	#if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 27))
-	if (!list_empty(list))
-		__list_splice(list, head);
-	#else
-	list_splice_tail(list, head);
-	#endif
-}
-
-inline void rtw_hlist_head_init(rtw_hlist_head *h)
-{
-	INIT_HLIST_HEAD(h);
-}
-
-inline void rtw_hlist_add_head(rtw_hlist_node *n, rtw_hlist_head *h)
-{
-	hlist_add_head(n, h);
-}
-
-inline void rtw_hlist_del(rtw_hlist_node *n)
-{
-	hlist_del(n);
-}
-
-inline void rtw_hlist_add_head_rcu(rtw_hlist_node *n, rtw_hlist_head *h)
-{
-	hlist_add_head_rcu(n, h);
-}
-
-inline void rtw_hlist_del_rcu(rtw_hlist_node *n)
-{
-	hlist_del_rcu(n);
-}
-
-void rtw_init_timer(_timer *ptimer, void *pfunc, void *ctx)
-{
-	_init_timer(ptimer, pfunc, ctx);
-}
-
-systime _rtw_get_current_time(void)
-{
-	return jiffies;
-}
-
-inline u32 _rtw_systime_to_ms(systime stime)
-{
-	return jiffies_to_msecs(stime);
-}
-
-inline u32 _rtw_systime_to_us(systime stime)
-{
-	return jiffies_to_usecs(stime);
-}
-
-inline systime _rtw_ms_to_systime(u32 ms)
-{
-	return msecs_to_jiffies(ms);
-}
-
-inline systime _rtw_us_to_systime(u32 us)
-{
-	return usecs_to_jiffies(us);
-}
-
-inline bool _rtw_time_after(systime a, systime b)
-{
-	return time_after(a, b);
-}
-
-inline bool _rtw_time_after_eq(systime a, systime b)
-{
-	return time_after_eq(a, b);
-}
-
-void rtw_sleep_schedulable(int ms)
-{
-	u32 delta;
-
-	delta = (ms * HZ) / 1000; /* (ms) */
-	if (delta == 0) {
-		delta = 1;/* 1 ms */
+	void **a = (void **) rtw_zmalloc(h * sizeof(void *) + h * w * size);
+	if (a == NULL) {
+		RTW_INFO("%s: alloc memory fail!\n", __FUNCTION__);
+		return NULL;
 	}
-	set_current_state(TASK_INTERRUPTIBLE);
-        schedule_timeout(delta);
-	return;
+
+	for (j = 0; j < h; j++)
+		a[j] = ((char *)(a + h)) + j * w * size;
+
+	return a;
 }
 
-void rtw_msleep_os(int ms)
+void rtw_mfree2d(void *pbuf, int h, int w, int size)
 {
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 36))
-	if (ms < 20) {
-		unsigned long us = ms * 1000UL;
-		usleep_range(us, us + 1000UL);
-	} else
-#endif
-		msleep((unsigned int)ms);
-
-}
-void rtw_usleep_os(int us)
-{
-	/* msleep((unsigned int)us); */
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 36))
-	usleep_range(us, us + 1);
-#else
-	if (1 < (us / 1000))
-		msleep(1);
-	else
-		msleep((us / 1000) + 1);
-#endif
+	rtw_mfree((u8 *)pbuf, h * sizeof(void *) + w * h * size);
 }
 
-
-#ifdef DBG_DELAY_OS
-void _rtw_mdelay_os(int ms, const char *func, const int line)
+int _rtw_memcmp2(const void *dst, const void *src, u32 sz)
 {
-	RTW_INFO("%s:%d %s(%d)\n", func, line, __FUNCTION__, ms);
-	mdelay((unsigned long)ms);
-}
-void _rtw_udelay_os(int us, const char *func, const int line)
-{
-	RTW_INFO("%s:%d %s(%d)\n", func, line, __FUNCTION__, us);
-	udelay((unsigned long)us);
-}
-#else
-void rtw_mdelay_os(int ms)
-{
-	mdelay((unsigned long)ms);
-}
-void rtw_udelay_os(int us)
-{
-	udelay((unsigned long)us);
-}
-#endif
+	const unsigned char *p1 = dst, *p2 = src;
 
-void rtw_yield_os(void)
-{
-	yield();
-}
-
-
-#define RTW_SUSPEND_LOCK_NAME "rtw_wifi"
-#define RTW_SUSPEND_TRAFFIC_LOCK_NAME "rtw_wifi_traffic"
-#define RTW_SUSPEND_RESUME_LOCK_NAME "rtw_wifi_resume"
-
-#ifdef CONFIG_WAKELOCK
-static struct wake_lock rtw_suspend_lock;
-static struct wake_lock rtw_suspend_traffic_lock;
-static struct wake_lock rtw_suspend_resume_lock;
-#elif defined(CONFIG_ANDROID_POWER)
-static android_suspend_lock_t rtw_suspend_lock = {
-	.name = RTW_SUSPEND_LOCK_NAME
-};
-static android_suspend_lock_t rtw_suspend_traffic_lock = {
-	.name = RTW_SUSPEND_TRAFFIC_LOCK_NAME
-};
-static android_suspend_lock_t rtw_suspend_resume_lock = {
-	.name = RTW_SUSPEND_RESUME_LOCK_NAME
-};
-#endif
-
-inline void rtw_suspend_lock_init(void)
-{
-#ifdef CONFIG_WAKELOCK
-	wake_lock_init(&rtw_suspend_lock, WAKE_LOCK_SUSPEND, RTW_SUSPEND_LOCK_NAME);
-	wake_lock_init(&rtw_suspend_traffic_lock, WAKE_LOCK_SUSPEND, RTW_SUSPEND_TRAFFIC_LOCK_NAME);
-	wake_lock_init(&rtw_suspend_resume_lock, WAKE_LOCK_SUSPEND, RTW_SUSPEND_RESUME_LOCK_NAME);
-#elif defined(CONFIG_ANDROID_POWER)
-	android_init_suspend_lock(&rtw_suspend_lock);
-	android_init_suspend_lock(&rtw_suspend_traffic_lock);
-	android_init_suspend_lock(&rtw_suspend_resume_lock);
-#endif
-}
-
-inline void rtw_suspend_lock_uninit(void)
-{
-#ifdef CONFIG_WAKELOCK
-	wake_lock_destroy(&rtw_suspend_lock);
-	wake_lock_destroy(&rtw_suspend_traffic_lock);
-	wake_lock_destroy(&rtw_suspend_resume_lock);
-#elif defined(CONFIG_ANDROID_POWER)
-	android_uninit_suspend_lock(&rtw_suspend_lock);
-	android_uninit_suspend_lock(&rtw_suspend_traffic_lock);
-	android_uninit_suspend_lock(&rtw_suspend_resume_lock);
-#endif
-}
-
-inline void rtw_lock_suspend(void)
-{
-#ifdef CONFIG_WAKELOCK
-	wake_lock(&rtw_suspend_lock);
-#elif defined(CONFIG_ANDROID_POWER)
-	android_lock_suspend(&rtw_suspend_lock);
-#endif
-
-#if  defined(CONFIG_WAKELOCK) || defined(CONFIG_ANDROID_POWER)
-	/* RTW_INFO("####%s: suspend_lock_count:%d####\n", __FUNCTION__, rtw_suspend_lock.stat.count); */
-#endif
-}
-
-inline void rtw_unlock_suspend(void)
-{
-#ifdef CONFIG_WAKELOCK
-	wake_unlock(&rtw_suspend_lock);
-#elif defined(CONFIG_ANDROID_POWER)
-	android_unlock_suspend(&rtw_suspend_lock);
-#endif
-
-#if  defined(CONFIG_WAKELOCK) || defined(CONFIG_ANDROID_POWER)
-	/* RTW_INFO("####%s: suspend_lock_count:%d####\n", __FUNCTION__, rtw_suspend_lock.stat.count); */
-#endif
-}
-
-inline void rtw_resume_lock_suspend(void)
-{
-#ifdef CONFIG_WAKELOCK
-	wake_lock(&rtw_suspend_resume_lock);
-#elif defined(CONFIG_ANDROID_POWER)
-	android_lock_suspend(&rtw_suspend_resume_lock);
-#endif
-
-#if  defined(CONFIG_WAKELOCK) || defined(CONFIG_ANDROID_POWER)
-	/* RTW_INFO("####%s: suspend_lock_count:%d####\n", __FUNCTION__, rtw_suspend_lock.stat.count); */
-#endif
-}
-
-inline void rtw_resume_unlock_suspend(void)
-{
-#ifdef CONFIG_WAKELOCK
-	wake_unlock(&rtw_suspend_resume_lock);
-#elif defined(CONFIG_ANDROID_POWER)
-	android_unlock_suspend(&rtw_suspend_resume_lock);
-#endif
-
-#if  defined(CONFIG_WAKELOCK) || defined(CONFIG_ANDROID_POWER)
-	/* RTW_INFO("####%s: suspend_lock_count:%d####\n", __FUNCTION__, rtw_suspend_lock.stat.count); */
-#endif
-}
-
-inline void rtw_lock_suspend_timeout(u32 timeout_ms)
-{
-#ifdef CONFIG_WAKELOCK
-	wake_lock_timeout(&rtw_suspend_lock, rtw_ms_to_systime(timeout_ms));
-#elif defined(CONFIG_ANDROID_POWER)
-	android_lock_suspend_auto_expire(&rtw_suspend_lock, rtw_ms_to_systime(timeout_ms));
-#endif
-}
-
-inline void rtw_lock_traffic_suspend_timeout(u32 timeout_ms)
-{
-#ifdef CONFIG_WAKELOCK
-	wake_lock_timeout(&rtw_suspend_traffic_lock, rtw_ms_to_systime(timeout_ms));
-#elif defined(CONFIG_ANDROID_POWER)
-	android_lock_suspend_auto_expire(&rtw_suspend_traffic_lock, rtw_ms_to_systime(timeout_ms));
-#endif
-	/* RTW_INFO("traffic lock timeout:%d\n", timeout_ms); */
-}
-
-inline void rtw_set_bit(int nr, unsigned long *addr)
-{
-	set_bit(nr, addr);
-}
-
-inline void rtw_clear_bit(int nr, unsigned long *addr)
-{
-	clear_bit(nr, addr);
-}
-
-inline int rtw_test_and_clear_bit(int nr, unsigned long *addr)
-{
-	return test_and_clear_bit(nr, addr);
-}
-inline int rtw_test_and_set_bit(int nr, unsigned long *addr)
-{
-	return test_and_set_bit(nr, addr);
-}
-
-#if !defined(CONFIG_RTW_ANDROID_GKI)
-/*
-* Open a file with the specific @param path, @param flag, @param mode
-* @param fpp the pointer of struct file pointer to get struct file pointer while file opening is success
-* @param path the path of the file to open
-* @param flag file operation flags, please refer to linux document
-* @param mode please refer to linux document
-* @return Linux specific error code
-*/
-static int openFile(struct file **fpp, const char *path, int flag, int mode)
-{
-	struct file *fp;
-
-	fp = filp_open(path, flag, mode);
-	if (IS_ERR(fp)) {
-		*fpp = NULL;
-		return PTR_ERR(fp);
-	} else {
-		*fpp = fp;
+	if (sz == 0)
 		return 0;
-	}
-}
 
-/*
-* Close the file with the specific @param fp
-* @param fp the pointer of struct file to close
-* @return always 0
-*/
-static int closeFile(struct file *fp)
-{
-	filp_close(fp, NULL);
-	return 0;
-}
-
-static int readFile(struct file *fp, char *buf, int len)
-{
-	int rlen = 0, sum = 0;
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 1, 0))
-	if (!(fp->f_mode & FMODE_CAN_READ))
-#else
-	if (!fp->f_op || !fp->f_op->read)
-#endif
-		return -EPERM;
-
-	while (sum < len) {
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0))
-		rlen = kernel_read(fp, buf + sum, len - sum, &fp->f_pos);
-#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 1, 0))
-		rlen = __vfs_read(fp, buf + sum, len - sum, &fp->f_pos);
-#else
-		rlen = fp->f_op->read(fp, buf + sum, len - sum, &fp->f_pos);
-#endif
-		if (rlen > 0)
-			sum += rlen;
-		else if (0 != rlen)
-			return rlen;
-		else
-			break;
+	while (*p1 == *p2) {
+		p1++;
+		p2++;
+		sz--;
+		if (sz == 0)
+			return 0;
 	}
 
-	return  sum;
-
+	return *p1 - *p2;
 }
 
-static int writeFile(struct file *fp, char *buf, int len)
+void _rtw_init_queue(_queue *pqueue)
 {
-	int wlen = 0, sum = 0;
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 1, 0))
-	if (!(fp->f_mode & FMODE_CAN_WRITE))
-#else
-	if (!fp->f_op || !fp->f_op->write)
-#endif
-		return -EPERM;
-
-	while (sum < len) {
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0))
-		wlen = kernel_write(fp, buf + sum, len - sum, &fp->f_pos);
-#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 1, 0))
-		wlen = __vfs_write(fp, buf + sum, len - sum, &fp->f_pos);
-#else
-		wlen = fp->f_op->write(fp, buf + sum, len - sum, &fp->f_pos);
-#endif
-		if (wlen > 0)
-			sum += wlen;
-		else if (0 != wlen)
-			return wlen;
-		else
-			break;
-	}
-
-	return sum;
-
+	_rtw_init_listhead(&(pqueue->queue));
+	_rtw_spinlock_init(&(pqueue->lock));
 }
+
+void _rtw_deinit_queue(_queue *pqueue)
+{
+	_rtw_spinlock_free(&(pqueue->lock));
+}
+
+u32 _rtw_queue_empty(_queue	*pqueue)
+{
+	return rtw_is_list_empty(&(pqueue->queue));
+}
+
+
+u32 rtw_end_of_queue_search(_list *head, _list *plist)
+{
+	if (head == plist)
+		return _TRUE;
+	else
+		return _FALSE;
+}
+
+/* the input parameter start use the same unit as returned by rtw_get_current_time */
+inline s32 _rtw_get_passing_time_ms(systime start)
+{
+	return _rtw_systime_to_ms(_rtw_get_current_time() - start);
+}
+
+inline s32 _rtw_get_remaining_time_ms(systime end)
+{
+	return _rtw_systime_to_ms(end - _rtw_get_current_time());
+}
+
+inline s32 _rtw_get_time_interval_ms(systime start, systime end)
+{
+	return _rtw_systime_to_ms(end - start);
+}
+
+bool rtw_macaddr_is_larger(const u8 *a, const u8 *b)
+{
+	u32 va, vb;
+
+	va = be32_to_cpu(*((u32 *)a));
+	vb = be32_to_cpu(*((u32 *)b));
+	if (va > vb)
+		return 1;
+	else if (va < vb)
+		return 0;
+
+	return be16_to_cpu(*((u16 *)(a + 4))) > be16_to_cpu(*((u16 *)(b + 4)));
+}
+
 
 /*
-* Test if the specifi @param pathname is a direct and readable
-* If readable, @param sz is not used
-* @param pathname the name of the path to test
-* @return Linux specific error code
-*/
-static int isDirReadable(const char *pathname, u32 *sz)
-{
-	struct path path;
-	int error = 0;
-
-	return kern_path(pathname, LOOKUP_FOLLOW, &path);
-}
-
-/*
-* Test if the specifi @param path is a file and readable
+* Test if the specifi @param path is a readable file with valid size.
 * If readable, @param sz is got
 * @param path the path of the file to test
-* @return Linux specific error code
+* @return _TRUE or _FALSE
 */
-static int isFileReadable(const char *path, u32 *sz)
+int rtw_readable_file_sz_chk(const char *path, u32 sz)
 {
-	struct file *fp;
-	int ret = 0;
-	#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
-	mm_segment_t oldfs;
-	#endif
-	char buf;
+	u32 fsz;
 
-	fp = filp_open(path, O_RDONLY, 0);
-	if (IS_ERR(fp))
-		ret = PTR_ERR(fp);
-	else {
-		#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
-		oldfs = get_fs();
-		#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0))
-		set_fs(KERNEL_DS);
-		#else
-		set_fs(get_ds());
-		#endif
-		#endif
+	if (rtw_is_file_readable_with_size(path, &fsz) == _FALSE)
+		return _FALSE;
 
-		if (1 != readFile(fp, &buf, 1))
-			ret = PTR_ERR(fp);
-
-		if (ret == 0 && sz) {
-			#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 19, 0))
-			*sz = i_size_read(fp->f_path.dentry->d_inode);
-			#else
-			*sz = i_size_read(fp->f_dentry->d_inode);
-			#endif
-		}
-
-		#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
-		set_fs(oldfs);
-		#endif
-		filp_close(fp, NULL);
-	}
-	return ret;
+	if (fsz > sz)
+		return _FALSE;
+	
+	return _TRUE;
 }
-#endif /* !defined(CONFIG_RTW_ANDROID_GKI)*/
 
-/*
-* Open the file with @param path and retrive the file content into memory starting from @param buf for @param sz at most
-* @param path the path of the file to open and read
-* @param buf the starting address of the buffer to store file content
-* @param sz how many bytes to read at most
-* @return the byte we've read, or Linux specific error code
-*/
-static int retriveFromFile(const char *path, u8 *buf, u32 sz)
+void rtw_buf_free(u8 **buf, u32 *buf_len)
 {
-#if defined(CONFIG_RTW_ANDROID_GKI)
-	int ret = -EINVAL;
-	const struct firmware *fw = NULL;
-	char* const delim = "/";
-	char *name, *token, *cur, *path_tmp = NULL;
+	u32 ori_len;
 
+	if (!buf || !buf_len)
+		return;
 
-	if (path == NULL || buf == NULL) {
-		RTW_ERR("%s() NULL pointer\n", __func__);
-		goto err;
+	ori_len = *buf_len;
+
+	if (*buf) {
+		u32 tmp_buf_len = *buf_len;
+		*buf_len = 0;
+		rtw_mfree(*buf, tmp_buf_len);
+		*buf = NULL;
+	}
+}
+
+void rtw_buf_update(u8 **buf, u32 *buf_len, const u8 *src, u32 src_len)
+{
+	u32 ori_len = 0, dup_len = 0;
+	u8 *ori = NULL;
+	u8 *dup = NULL;
+
+	if (!buf || !buf_len)
+		return;
+
+	if (!src || !src_len)
+		goto keep_ori;
+
+	/* duplicate src */
+	dup = rtw_malloc(src_len);
+	if (dup) {
+		dup_len = src_len;
+		_rtw_memcpy(dup, src, dup_len);
 	}
 
-	path_tmp = kstrdup(path, GFP_KERNEL);
-	if (path_tmp == NULL) {
-		RTW_ERR("%s() cannot copy path for parsing file name\n", __func__);
-		goto err;
+keep_ori:
+	ori = *buf;
+	ori_len = *buf_len;
+
+	/* replace buf with dup */
+	*buf_len = 0;
+	*buf = dup;
+	*buf_len = dup_len;
+
+	/* free ori */
+	if (ori && ori_len > 0)
+		rtw_mfree(ori, ori_len);
+}
+
+
+/**
+ * rtw_cbuf_full - test if cbuf is full
+ * @cbuf: pointer of struct rtw_cbuf
+ *
+ * Returns: _TRUE if cbuf is full
+ */
+inline bool rtw_cbuf_full(struct rtw_cbuf *cbuf)
+{
+	return (cbuf->write == cbuf->read - 1) ? _TRUE : _FALSE;
+}
+
+/**
+ * rtw_cbuf_empty - test if cbuf is empty
+ * @cbuf: pointer of struct rtw_cbuf
+ *
+ * Returns: _TRUE if cbuf is empty
+ */
+inline bool rtw_cbuf_empty(struct rtw_cbuf *cbuf)
+{
+	return (cbuf->write == cbuf->read) ? _TRUE : _FALSE;
+}
+
+/**
+ * rtw_cbuf_push - push a pointer into cbuf
+ * @cbuf: pointer of struct rtw_cbuf
+ * @buf: pointer to push in
+ *
+ * Lock free operation, be careful of the use scheme
+ * Returns: _TRUE push success
+ */
+bool rtw_cbuf_push(struct rtw_cbuf *cbuf, void *buf)
+{
+	if (rtw_cbuf_full(cbuf))
+		return _FAIL;
+
+	if (0)
+		RTW_INFO("%s on %u\n", __func__, cbuf->write);
+	cbuf->bufs[cbuf->write] = buf;
+	cbuf->write = (cbuf->write + 1) % cbuf->size;
+
+	return _SUCCESS;
+}
+
+/**
+ * rtw_cbuf_pop - pop a pointer from cbuf
+ * @cbuf: pointer of struct rtw_cbuf
+ *
+ * Lock free operation, be careful of the use scheme
+ * Returns: pointer popped out
+ */
+void *rtw_cbuf_pop(struct rtw_cbuf *cbuf)
+{
+	void *buf;
+	if (rtw_cbuf_empty(cbuf))
+		return NULL;
+
+	if (0)
+		RTW_INFO("%s on %u\n", __func__, cbuf->read);
+	buf = cbuf->bufs[cbuf->read];
+	cbuf->read = (cbuf->read + 1) % cbuf->size;
+
+	return buf;
+}
+
+/**
+ * rtw_cbuf_alloc - allocte a rtw_cbuf with given size and do initialization
+ * @size: size of pointer
+ *
+ * Returns: pointer of srtuct rtw_cbuf, NULL for allocation failure
+ */
+struct rtw_cbuf *rtw_cbuf_alloc(u32 size)
+{
+	struct rtw_cbuf *cbuf;
+
+	cbuf = (struct rtw_cbuf *)rtw_malloc(sizeof(*cbuf) + sizeof(void *) * size);
+
+	if (cbuf) {
+		cbuf->write = cbuf->read = 0;
+		cbuf->size = size;
 	}
 
-	/* parsing file name from path */
-	cur = path_tmp;
-	token = strsep(&cur, delim);
-	while (token != NULL) {
-		token = strsep(&cur, delim);
-		if(token)
-			name = token;
+	return cbuf;
+}
+
+/**
+ * rtw_cbuf_free - free the given rtw_cbuf
+ * @cbuf: pointer of struct rtw_cbuf to free
+ */
+void rtw_cbuf_free(struct rtw_cbuf *cbuf)
+{
+	rtw_mfree((u8 *)cbuf, sizeof(*cbuf) + sizeof(void *) * cbuf->size);
+}
+
+/**
+ * map_readN - read a range of map data
+ * @map: map to read
+ * @offset: start address to read
+ * @len: length to read
+ * @buf: pointer of buffer to store data read
+ *
+ * Returns: _SUCCESS or _FAIL
+ */
+int map_readN(const struct map_t *map, u16 offset, u16 len, u8 *buf)
+{
+	const struct map_seg_t *seg;
+	int ret = _FAIL;
+	int i;
+
+	if (len == 0) {
+		rtw_warn_on(1);
+		goto exit;
 	}
 
-	if (name == NULL) {
-		RTW_ERR("%s() parsing file name fail\n", __func__);
-		goto err;
+	if (offset + len > map->len) {
+		rtw_warn_on(1);
+		goto exit;
 	}
 
-	/* request_firmware() will find file in /vendor/firmware but not in path */
-	ret = request_firmware(&fw, name, NULL);
-	if (ret == 0) {
-		RTW_INFO("%s() Success. retrieve file : %s, file size : %zu\n", __func__, name, fw->size);
+	_rtw_memset(buf, map->init_value, len);
 
-		if ((u32)fw->size < sz) {
-			_rtw_memcpy(buf, fw->data, (u32)fw->size);
-			ret = (u32)fw->size;
-			goto exit;
+	for (i = 0; i < map->seg_num; i++) {
+		u8 *c_dst, *c_src;
+		u16 c_len;
+
+		seg = map->segs + i;
+		if (seg->sa + seg->len <= offset || seg->sa >= offset + len)
+			continue;
+
+		if (seg->sa >= offset) {
+			c_dst = buf + (seg->sa - offset);
+			c_src = seg->c;
+			if (seg->sa + seg->len <= offset + len)
+				c_len = seg->len;
+			else
+				c_len = offset + len - seg->sa;
 		} else {
-			RTW_ERR("%s() file size : %zu exceed buf size : %u\n", __func__, fw->size, sz);
-			ret = -EFBIG;
-			goto err;
+			c_dst = buf;
+			c_src = seg->c + (offset - seg->sa);
+			if (seg->sa + seg->len >= offset + len)
+				c_len = len;
+			else
+				c_len = seg->sa + seg->len - offset;
 		}
-	} else {
-		RTW_ERR("%s() Fail. retrieve file : %s, error : %d\n", __func__, name, ret);
-		goto err;
+			
+		_rtw_memcpy(c_dst, c_src, c_len);
 	}
 
-
-
-err:
-	RTW_ERR("%s() Fail. retrieve file : %s, error : %d\n", __func__, path, ret);
 exit:
-	if (path_tmp)
-		kfree(path_tmp);
-	if (fw)
-		release_firmware(fw);
-	return ret;
-#else /* !defined(CONFIG_RTW_ANDROID_GKI) */
-	int ret = -1;
-	#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
-	mm_segment_t oldfs;
-	#endif
-	struct file *fp;
-
-	if (path && buf) {
-		ret = openFile(&fp, path, O_RDONLY, 0);
-		if (0 == ret) {
-			RTW_INFO("%s openFile path:%s fp=%p\n", __FUNCTION__, path , fp);
-
-			#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
-			oldfs = get_fs();
-			#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0))
-			set_fs(KERNEL_DS);
-			#else
-			set_fs(get_ds());
-			#endif
-			#endif
-
-			ret = readFile(fp, buf, sz);
-
-			#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
-			set_fs(oldfs);
-			#endif
-			closeFile(fp);
-
-			RTW_INFO("%s readFile, ret:%d\n", __FUNCTION__, ret);
-
-		} else
-			RTW_INFO("%s openFile path:%s Fail, ret:%d\n", __FUNCTION__, path, ret);
-	} else {
-		RTW_INFO("%s NULL pointer\n", __FUNCTION__);
-		ret =  -EINVAL;
-	}
-	return ret;
-#endif /* defined(CONFIG_RTW_ANDROID_GKI) */
-}
-
-#if !defined(CONFIG_RTW_ANDROID_GKI)
-/*
-* Open the file with @param path and wirte @param sz byte of data starting from @param buf into the file
-* @param path the path of the file to open and write
-* @param buf the starting address of the data to write into file
-* @param sz how many bytes to write at most
-* @return the byte we've written, or Linux specific error code
-*/
-static int storeToFile(const char *path, u8 *buf, u32 sz)
-{
-	int ret = 0;
-	#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
-	mm_segment_t oldfs;
-	#endif
-	struct file *fp;
-
-	if (path && buf) {
-		ret = openFile(&fp, path, O_CREAT | O_WRONLY, 0666);
-		if (0 == ret) {
-			RTW_INFO("%s openFile path:%s fp=%p\n", __FUNCTION__, path , fp);
-
-			#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
-			oldfs = get_fs();
-			#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0))
-			set_fs(KERNEL_DS);
-			#else
-			set_fs(get_ds());
-			#endif
-			#endif
-
-			ret = writeFile(fp, buf, sz);
-
-			#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
-			set_fs(oldfs);
-			#endif
-			closeFile(fp);
-
-			RTW_INFO("%s writeFile, ret:%d\n", __FUNCTION__, ret);
-
-		} else
-			RTW_INFO("%s openFile path:%s Fail, ret:%d\n", __FUNCTION__, path, ret);
-	} else {
-		RTW_INFO("%s NULL pointer\n", __FUNCTION__);
-		ret =  -EINVAL;
-	}
 	return ret;
 }
 
-/*
-* Test if the specifi @param path is a direct and readable
-* @param path the path of the direct to test
-* @return _TRUE or _FALSE
-*/
-int rtw_is_dir_readable(const char *path)
+/**
+ * map_read8 - read 1 byte of map data
+ * @map: map to read
+ * @offset: address to read
+ *
+ * Returns: value of data of specified offset. map.init_value if offset is out of range
+ */
+u8 map_read8(const struct map_t *map, u16 offset)
 {
-	if (isDirReadable(path, NULL) == 0)
+	const struct map_seg_t *seg;
+	u8 val = map->init_value;
+	int i;
+
+	if (offset + 1 > map->len) {
+		rtw_warn_on(1);
+		goto exit;
+	}
+
+	for (i = 0; i < map->seg_num; i++) {
+		seg = map->segs + i;
+		if (seg->sa + seg->len <= offset || seg->sa >= offset + 1)
+			continue;
+
+		val = *(seg->c + offset - seg->sa);
+		break;
+	}
+
+exit:
+	return val;
+}
+
+int rtw_blacklist_add(_queue *blist, const u8 *addr, u32 timeout_ms)
+{
+	struct blacklist_ent *ent;
+	_list *list, *head;
+	u8 exist = _FALSE, timeout = _FALSE;
+
+	_rtw_spinlock_bh(&blist->lock);
+
+	head = &blist->queue;
+	list = get_next(head);
+	while (rtw_end_of_queue_search(head, list) == _FALSE) {
+		ent = LIST_CONTAINOR(list, struct blacklist_ent, list);
+		list = get_next(list);
+
+		if (_rtw_memcmp(ent->addr, addr, ETH_ALEN) == _TRUE) {
+			exist = _TRUE;
+			if (rtw_time_after(rtw_get_current_time(), ent->exp_time))
+				timeout = _TRUE;
+			ent->exp_time = rtw_get_current_time()
+				+ rtw_ms_to_systime(timeout_ms);
+			break;
+		}
+
+		if (rtw_time_after(rtw_get_current_time(), ent->exp_time)) {
+			rtw_list_delete(&ent->list);
+			rtw_mfree(ent, sizeof(struct blacklist_ent));
+		}
+	}
+
+	if (exist == _FALSE) {
+		ent = rtw_malloc(sizeof(struct blacklist_ent));
+		if (ent) {
+			_rtw_memcpy(ent->addr, addr, ETH_ALEN);
+			ent->exp_time = rtw_get_current_time()
+				+ rtw_ms_to_systime(timeout_ms);
+			rtw_list_insert_tail(&ent->list, head);
+		}
+	}
+
+	_rtw_spinunlock_bh(&blist->lock);
+
+	return (exist == _TRUE && timeout == _FALSE) ? RTW_ALREADY : (ent ? _SUCCESS : _FAIL);
+}
+
+int rtw_blacklist_del(_queue *blist, const u8 *addr)
+{
+	struct blacklist_ent *ent = NULL;
+	_list *list, *head;
+	u8 exist = _FALSE;
+
+	_rtw_spinlock_bh(&blist->lock);
+	head = &blist->queue;
+	list = get_next(head);
+	while (rtw_end_of_queue_search(head, list) == _FALSE) {
+		ent = LIST_CONTAINOR(list, struct blacklist_ent, list);
+		list = get_next(list);
+
+		if (_rtw_memcmp(ent->addr, addr, ETH_ALEN) == _TRUE) {
+			rtw_list_delete(&ent->list);
+			rtw_mfree(ent, sizeof(struct blacklist_ent));
+			exist = _TRUE;
+			break;
+		}
+
+		if (rtw_time_after(rtw_get_current_time(), ent->exp_time)) {
+			rtw_list_delete(&ent->list);
+			rtw_mfree(ent, sizeof(struct blacklist_ent));
+		}
+	}
+
+	_rtw_spinunlock_bh(&blist->lock);
+
+	return exist == _TRUE ? _SUCCESS : RTW_ALREADY;
+}
+
+int rtw_blacklist_search(_queue *blist, const u8 *addr)
+{
+	struct blacklist_ent *ent = NULL;
+	_list *list, *head;
+	u8 exist = _FALSE;
+
+	_rtw_spinlock_bh(&blist->lock);
+	head = &blist->queue;
+	list = get_next(head);
+	while (rtw_end_of_queue_search(head, list) == _FALSE) {
+		ent = LIST_CONTAINOR(list, struct blacklist_ent, list);
+		list = get_next(list);
+
+		if (_rtw_memcmp(ent->addr, addr, ETH_ALEN) == _TRUE) {
+			if (rtw_time_after(rtw_get_current_time(), ent->exp_time)) {
+				rtw_list_delete(&ent->list);
+				rtw_mfree(ent, sizeof(struct blacklist_ent));
+			} else
+				exist = _TRUE;
+			break;
+		}
+
+		if (rtw_time_after(rtw_get_current_time(), ent->exp_time)) {
+			rtw_list_delete(&ent->list);
+			rtw_mfree(ent, sizeof(struct blacklist_ent));
+		}
+	}
+
+	_rtw_spinunlock_bh(&blist->lock);
+
+	return exist;
+}
+
+void rtw_blacklist_flush(_queue *blist)
+{
+	struct blacklist_ent *ent;
+	_list *list, *head;
+	_list tmp;
+
+	_rtw_init_listhead(&tmp);
+
+	_rtw_spinlock_bh(&blist->lock);
+	rtw_list_splice_init(&blist->queue, &tmp);
+	_rtw_spinunlock_bh(&blist->lock);
+
+	head = &tmp;
+	list = get_next(head);
+	while (rtw_end_of_queue_search(head, list) == _FALSE) {
+		ent = LIST_CONTAINOR(list, struct blacklist_ent, list);
+		list = get_next(list);
+		rtw_list_delete(&ent->list);
+		rtw_mfree(ent, sizeof(struct blacklist_ent));
+	}
+}
+
+void dump_blacklist(void *sel, _queue *blist, const char *title)
+{
+	struct blacklist_ent *ent = NULL;
+	_list *list, *head;
+
+	_rtw_spinlock_bh(&blist->lock);
+	head = &blist->queue;
+	list = get_next(head);
+
+	if (rtw_end_of_queue_search(head, list) == _FALSE) {
+		if (title)
+			RTW_PRINT_SEL(sel, "%s:\n", title);
+	
+		while (rtw_end_of_queue_search(head, list) == _FALSE) {
+			ent = LIST_CONTAINOR(list, struct blacklist_ent, list);
+			list = get_next(list);
+
+			if (rtw_time_after(rtw_get_current_time(), ent->exp_time))
+				RTW_PRINT_SEL(sel, MAC_FMT" expired\n", MAC_ARG(ent->addr));
+			else
+				RTW_PRINT_SEL(sel, MAC_FMT" %u\n", MAC_ARG(ent->addr)
+					, rtw_get_remaining_time_ms(ent->exp_time));
+		}
+
+	}
+	_rtw_spinunlock_bh(&blist->lock);
+}
+
+/**
+* is_null -
+*
+* Return	TRUE if c is null character
+*		FALSE otherwise.
+*/
+inline BOOLEAN is_null(char c)
+{
+	if (c == '\0')
 		return _TRUE;
 	else
 		return _FALSE;
 }
-#endif /* !defined(CONFIG_RTW_ANDROID_GKI)*/
 
-/*
-* Test if the specifi @param path is a file and readable
-* @param path the path of the file to test
-* @return _TRUE or _FALSE
-*/
-int rtw_is_file_readable(const char *path)
+inline BOOLEAN is_all_null(char *c, int len)
 {
-#if !defined(CONFIG_RTW_ANDROID_GKI)
-	if (isFileReadable(path, NULL) == 0)
+	for (; len > 0; len--)
+		if (c[len - 1] != '\0')
+			return _FALSE;
+
+	return _TRUE;
+}
+
+/**
+* is_eol -
+*
+* Return	TRUE if c is represent for EOL (end of line)
+*		FALSE otherwise.
+*/
+inline BOOLEAN is_eol(char c)
+{
+	if (c == '\r' || c == '\n')
 		return _TRUE;
 	else
 		return _FALSE;
-#else
-	RTW_INFO("%s() Android GKI prohibbit kernel_read, return _TRUE\n", __func__);
-	return  _TRUE;
-#endif /* !defined(CONFIG_RTW_ANDROID_GKI) */
 }
 
-/*
-* Test if the specifi @param path is a file and readable.
-* If readable, @param sz is got
-* @param path the path of the file to test
-* @return _TRUE or _FALSE
+/**
+* is_space -
+*
+* Return	TRUE if c is represent for space
+*		FALSE otherwise.
 */
-int rtw_is_file_readable_with_size(const char *path, u32 *sz)
+inline BOOLEAN is_space(char c)
 {
-#if !defined(CONFIG_RTW_ANDROID_GKI)
-	if (isFileReadable(path, sz) == 0)
+	if (c == ' ' || c == '\t')
 		return _TRUE;
 	else
 		return _FALSE;
-#else
-	RTW_INFO("%s() Android GKI prohibbit kernel_read, return _TRUE\n", __func__);
-	*sz = 0;
-	return  _TRUE;
-#endif /* !defined(CONFIG_RTW_ANDROID_GKI) */
 }
 
-
-/*
-* Open the file with @param path and retrive the file content into memory starting from @param buf for @param sz at most
-* @param path the path of the file to open and read
-* @param buf the starting address of the buffer to store file content
-* @param sz how many bytes to read at most
-* @return the byte we've read
+/**
+* is_decimal -
+*
+* Return	TRUE if chTmp is represent for decimal digit
+*		FALSE otherwise.
 */
-int rtw_retrieve_from_file(const char *path, u8 *buf, u32 sz)
+inline BOOLEAN is_decimal(char chTmp)
 {
-	int ret = retriveFromFile(path, buf, sz);
-	return ret >= 0 ? ret : 0;
+	if ((chTmp >= '0' && chTmp <= '9'))
+		return _TRUE;
+	else
+		return _FALSE;
 }
 
-#if !defined(CONFIG_RTW_ANDROID_GKI)
-/*
-* Open the file with @param path and wirte @param sz byte of data starting from @param buf into the file
-* @param path the path of the file to open and write
-* @param buf the starting address of the data to write into file
-* @param sz how many bytes to write at most
-* @return the byte we've written
+/**
+* IsHexDigit -
+*
+* Return	TRUE if chTmp is represent for hex digit
+*		FALSE otherwise.
 */
-int rtw_store_to_file(const char *path, u8 *buf, u32 sz)
+inline BOOLEAN IsHexDigit(char chTmp)
 {
-	int ret = storeToFile(path, buf, sz);
-	return ret >= 0 ? ret : 0;
-}
-#endif /* !defined(CONFIG_RTW_ANDROID_GKI) */
-
-struct net_device *rtw_alloc_etherdev_with_old_priv(int sizeof_priv, void *old_priv)
-{
-	struct net_device *pnetdev;
-	struct rtw_netdev_priv_indicator *pnpi;
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 35))
-	pnetdev = alloc_etherdev_mq(sizeof(struct rtw_netdev_priv_indicator), 4);
-#else
-	pnetdev = alloc_etherdev(sizeof(struct rtw_netdev_priv_indicator));
-#endif
-	if (!pnetdev)
-		goto RETURN;
-
-	pnpi = netdev_priv(pnetdev);
-	pnpi->priv = old_priv;
-	pnpi->sizeof_priv = sizeof_priv;
-
-RETURN:
-	return pnetdev;
-}
-
-struct net_device *rtw_alloc_etherdev(int sizeof_priv)
-{
-	struct net_device *pnetdev;
-	struct rtw_netdev_priv_indicator *pnpi;
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 35))
-	pnetdev = alloc_etherdev_mq(sizeof(struct rtw_netdev_priv_indicator), 4);
-#else
-	pnetdev = alloc_etherdev(sizeof(struct rtw_netdev_priv_indicator));
-#endif
-	if (!pnetdev)
-		goto RETURN;
-
-	pnpi = netdev_priv(pnetdev);
-
-	pnpi->priv = rtw_zvmalloc(sizeof_priv);
-	if (!pnpi->priv) {
-		free_netdev(pnetdev);
-		pnetdev = NULL;
-		goto RETURN;
-	}
-
-	pnpi->sizeof_priv = sizeof_priv;
-RETURN:
-	return pnetdev;
-}
-
-void rtw_free_netdev(struct net_device *netdev)
-{
-	struct rtw_netdev_priv_indicator *pnpi;
-
-	if (!netdev)
-		goto RETURN;
-
-	pnpi = netdev_priv(netdev);
-
-	if (!pnpi->priv)
-		goto RETURN;
-
-	free_netdev(netdev);
-
-RETURN:
-	return;
-}
-
-int rtw_change_ifname(_adapter *padapter, const char *ifname)
-{
-	struct dvobj_priv *dvobj;
-	struct net_device *pnetdev;
-	struct net_device *cur_pnetdev;
-	struct rereg_nd_name_data *rereg_priv;
-	int ret;
-	u8 rtnl_lock_needed;
-
-	if (!padapter)
-		goto error;
-
-	dvobj = adapter_to_dvobj(padapter);
-	cur_pnetdev = padapter->pnetdev;
-	rereg_priv = &padapter->rereg_nd_name_priv;
-
-	/* free the old_pnetdev */
-	if (rereg_priv->old_pnetdev) {
-		free_netdev(rereg_priv->old_pnetdev);
-		rereg_priv->old_pnetdev = NULL;
-	}
-
-	rtnl_lock_needed = rtw_rtnl_lock_needed(dvobj);
-
-	if (rtnl_lock_needed)
-		unregister_netdev(cur_pnetdev);
+	if ((chTmp >= '0' && chTmp <= '9') ||
+		(chTmp >= 'a' && chTmp <= 'f') ||
+		(chTmp >= 'A' && chTmp <= 'F'))
+		return _TRUE;
 	else
-		unregister_netdevice(cur_pnetdev);
+		return _FALSE;
+}
 
-	rereg_priv->old_pnetdev = cur_pnetdev;
-
-	pnetdev = rtw_init_netdev(padapter);
-	if (!pnetdev)  {
-		ret = -1;
-		goto error;
-	}
-
-	SET_NETDEV_DEV(pnetdev, dvobj_to_dev(adapter_to_dvobj(padapter)));
-
-	rtw_init_netdev_name(pnetdev, ifname);
-
-	dev_addr_mod(pnetdev, 0, adapter_mac_addr(padapter), ETH_ALEN);
-
-	if (rtnl_lock_needed)
-		ret = register_netdev(pnetdev);
+/**
+* is_alpha -
+*
+* Return	TRUE if chTmp is represent for alphabet
+*		FALSE otherwise.
+*/
+inline BOOLEAN is_alpha(char chTmp)
+{
+	if ((chTmp >= 'a' && chTmp <= 'z') ||
+		(chTmp >= 'A' && chTmp <= 'Z'))
+		return _TRUE;
 	else
-		ret = register_netdevice(pnetdev);
+		return _FALSE;
+}
 
-	if (ret != 0) {
-		goto error;
-	}
+inline char alpha_to_upper(char c)
+{
+	if ((c >= 'a' && c <= 'z'))
+		c = 'A' + (c - 'a');
+	return c;
+}
 
-	return 0;
-
-error:
-
+int hex2num_i(char c)
+{
+	if (c >= '0' && c <= '9')
+		return c - '0';
+	if (c >= 'a' && c <= 'f')
+		return c - 'a' + 10;
+	if (c >= 'A' && c <= 'F')
+		return c - 'A' + 10;
 	return -1;
-
 }
 
-#ifdef CONFIG_PLATFORM_SPRD
-#ifdef do_div
-	#undef do_div
-#endif
-	#include <asm-generic/div64.h>
-#endif
-
-u64 rtw_modular64(u64 x, u64 y)
+int hex2byte_i(const char *hex)
 {
-	return do_div(x, y);
+	int a, b;
+	a = hex2num_i(*hex++);
+	if (a < 0)
+		return -1;
+	b = hex2num_i(*hex++);
+	if (b < 0)
+		return -1;
+	return (a << 4) | b;
 }
 
-u64 rtw_division64(u64 x, u64 y)
+int hexstr2bin(const char *hex, u8 *buf, size_t len)
 {
-	do_div(x, y);
-	return x;
+	size_t i;
+	int a;
+	const char *ipos = hex;
+	u8 *opos = buf;
+
+	for (i = 0; i < len; i++) {
+		a = hex2byte_i(ipos);
+		if (a < 0)
+			return -1;
+		*opos++ = a;
+		ipos += 2;
+	}
+	return 0;
 }
 
-inline u32 rtw_random32(void)
+void ustrs_add(char **ustrs, int *ustrs_len, const char *str)
 {
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0))
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
-	return get_random_u32();
-#else
-	return prandom_u32();
-#endif
-#elif (LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 18))
-	u32 random_int;
-	get_random_bytes(&random_int , 4);
-	return random_int;
-#else
-	return random32();
-#endif
+	char *tmp_ustrs;
+	int tmp_ustrs_len;
+
+	if (!str || !strlen(str))
+		return;
+
+	tmp_ustrs = *ustrs;
+	tmp_ustrs_len = *ustrs_len;
+	if (tmp_ustrs) {
+		const char *pos;
+
+		/* search for same string */
+		for (pos = tmp_ustrs; pos < tmp_ustrs + tmp_ustrs_len; pos += strlen(pos) + 1) {
+			if (strcmp(pos, str) == 0)
+				return;
+		}
+
+		/* no match, realloc and add */
+		tmp_ustrs = rtw_malloc(tmp_ustrs_len + strlen(str) + 1);
+		if (!tmp_ustrs) {
+			rtw_warn_on(1);
+			return;
+		}
+		_rtw_memcpy((void *)tmp_ustrs, *ustrs, tmp_ustrs_len);
+		_rtw_memcpy((void *)(tmp_ustrs + tmp_ustrs_len), str, strlen(str) + 1);
+		rtw_mfree((void *)*ustrs, tmp_ustrs_len);
+		*ustrs = tmp_ustrs;
+		*ustrs_len += strlen(str) + 1;
+
+	} else {
+		tmp_ustrs = rtw_malloc(strlen(str) + 1);
+		if (!tmp_ustrs) {
+			rtw_warn_on(1);
+			return;
+		}
+		_rtw_memcpy((void *)tmp_ustrs, str, strlen(str) + 1);
+		*ustrs = tmp_ustrs;
+		*ustrs_len = strlen(str) + 1;
+	}
 }
+
