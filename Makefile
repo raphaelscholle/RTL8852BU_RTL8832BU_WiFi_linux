@@ -66,7 +66,7 @@ CONFIG_GSPI_HCI = n
 ########################## Features ###########################
 CONFIG_MP_INCLUDED = y
 CONFIG_CONCURRENT_MODE = n
-CONFIG_POWER_SAVE = y
+CONFIG_POWER_SAVE = n
 CONFIG_BTC = y
 CONFIG_WAPI_SUPPORT = n
 CONFIG_EFUSE_CONFIG_FILE = n
@@ -76,9 +76,9 @@ CONFIG_LOAD_PHY_PARA_FROM_FILE = n
 # Remember to set CONFIG_FILE_FWIMG when set CONFIG_FILE_FWIMG to y,
 # or driver will fail on ifconfig up because can't find firmware file
 CONFIG_FILE_FWIMG = n
-CONFIG_TXPWR_BY_RATE = y
-CONFIG_TXPWR_BY_RATE_EN = y
-CONFIG_TXPWR_LIMIT = y
+CONFIG_TXPWR_BY_RATE = n
+CONFIG_TXPWR_BY_RATE_EN = n
+CONFIG_TXPWR_LIMIT = n
 CONFIG_TXPWR_LIMIT_EN = n
 CONFIG_RTW_REGDB = phl
 ########################## Initial Channel Plan  ##########################
