@@ -27,5 +27,13 @@ jobs:
         sudo apt install -y build-essential tree
         make clean
         make
+        mkdir -p /lib/modules/6.2.0-1018-azure/kernel/drivers/net/wireless/
         make install
         ls
+
+    - name: Upload to Github
+      uses: 'actions/upload-artifact@v2'
+      with:
+        name: ".ko x86"
+        path: |
+          /lib/modules/6.2.0-1018-azure/kernel/drivers/net/wireless/*
