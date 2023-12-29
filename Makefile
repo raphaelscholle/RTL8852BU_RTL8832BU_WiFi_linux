@@ -17,6 +17,7 @@ EXTRA_CFLAGS += -Wno-unused
 #EXTRA_CFLAGS += -Wno-uninitialized
 EXTRA_CFLAGS += -Wno-implicit-fallthrough
 EXTRA_CFLAGS += -Wno-implicit-function-declaration
+EXTRA_CFLAGS += -Wno-declaration-after-statement
 
 # gcc-12
 EXTRA_CFLAGS += -Wno-address
