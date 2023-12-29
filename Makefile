@@ -81,7 +81,7 @@ CONFIG_LOAD_PHY_PARA_FROM_FILE = n
 CONFIG_FILE_FWIMG = n
 CONFIG_TXPWR_BY_RATE = n
 CONFIG_TXPWR_BY_RATE_EN = n
-CONFIG_TXPWR_LIMIT = n
+CONFIG_TXPWR_LIMIT = y
 CONFIG_TXPWR_LIMIT_EN = n
 CONFIG_RTW_REGDB = phl
 ########################## Initial Channel Plan  ##########################
