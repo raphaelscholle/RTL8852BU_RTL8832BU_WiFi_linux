@@ -4456,7 +4456,7 @@ static int cfg80211_rtw_set_txpower(struct wiphy *wiphy,
         openhd_override_tx_power_mbm);
 
 	if (ret == 0)
-		rtw_run_in_thread_cmd_wait(adapter, ((void *)(rtw_hal_update_txpwr_level)), adapter, 2000);
+		rtw_run_in_thread_cmd_wait(adapter, ((void *)(rtw_update_txpwr_level)), adapter, 2000);
 
 exit:
 	return ret;
