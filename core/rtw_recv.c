@@ -3920,7 +3920,6 @@ exit:
 }
 #endif
 
-#if 0
 static void recv_set_iseq_before_mpdu_process(union recv_frame *rframe, u16 seq_num, const char *caller)
 {
 #if defined(CONFIG_80211N_HT) && defined(CONFIG_RECV_REORDERING_CTRL)
