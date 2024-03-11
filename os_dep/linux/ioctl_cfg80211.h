@@ -283,6 +283,9 @@ struct rtw_wiphy_data {
 	struct wireless_dev *pd_wdev; /* P2P device wdev */
 #endif
 
+	s16 txpwr_total_lmt_mbm;	/* EIRP */
+	s16 txpwr_total_target_mbm;	/* EIRP */
+
 	_list async_regd_change_list;
 	_mutex async_regd_change_mutex;
 	_workitem async_regd_change_work;
