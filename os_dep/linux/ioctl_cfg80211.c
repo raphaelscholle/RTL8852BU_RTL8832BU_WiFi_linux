@@ -4423,19 +4423,11 @@ static int cfg80211_rtw_set_txpower(struct wiphy *wiphy,
 		ret = 0;
 		break;
 	case NL80211_TX_POWER_LIMITED:
-		if (!phy_is_txpwr_user_mbm_valid(adapter, mbm)) {
-			RTW_WARN(FUNC_WIPHY_FMT" mbm:%d not support\n", FUNC_WIPHY_ARG(wiphy), mbm);
-			goto exit;
-		}
 		wiphy_data->txpwr_total_lmt_mbm = mbm;
 		wiphy_data->txpwr_total_target_mbm = UNSPECIFIED_MBM;
 		ret = 0;
 		break;
 	case NL80211_TX_POWER_FIXED:
-		if (!phy_is_txpwr_user_mbm_valid(adapter, mbm)) {
-			RTW_WARN(FUNC_WIPHY_FMT" mbm:%d not support\n", FUNC_WIPHY_ARG(wiphy), mbm);
-			goto exit;
-		}
 		wiphy_data->txpwr_total_lmt_mbm = UNSPECIFIED_MBM;
 		wiphy_data->txpwr_total_target_mbm = mbm;
 		ret = 0;
