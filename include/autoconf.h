@@ -50,7 +50,7 @@
  * Public  General Config
  */
 #define AUTOCONF_INCLUDED
-#define DRV_NAME "rtl8852bu"
+#define DRV_NAME "rtl8852bu_ohd"
 
 #define CONFIG_USB_HCI
 

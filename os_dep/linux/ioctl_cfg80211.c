@@ -4398,35 +4398,70 @@ static int cfg80211_rtw_set_txpower(struct wiphy *wiphy,
 	enum tx_power_setting type, int dbm)
 #endif
 {
-#if 0
-	struct iwm_priv *iwm = wiphy_to_iwm(wiphy);
-	int ret;
+#if !((LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 36)) || defined(COMPAT_KERNEL_RELEASE))
+	int mbm = dbm * 100;
+#endif
+	struct rtw_wiphy_data *wiphy_data = rtw_wiphy_priv(wiphy);
+	_adapter *adapter = wiphy_to_adapter(wiphy);
+	int ret = -EOPNOTSUPP;
+    int openhd_override_tx_power_mbm=0;
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0))
+	if (wdev) {
+		RTW_WARN(FUNC_WIPHY_FMT" wdev specific control is not supported\n", FUNC_WIPHY_ARG(wiphy));
+		goto exit;
+	}
+#endif
+
+	RTW_INFO(FUNC_WIPHY_FMT" type:%s(%u) mbm:%d\n", FUNC_WIPHY_ARG(wiphy)
+		, nl80211_tx_power_setting_str(type), type, mbm);
 
 	switch (type) {
 	case NL80211_TX_POWER_AUTOMATIC:
-		return 0;
+		wiphy_data->txpwr_total_lmt_mbm = UNSPECIFIED_MBM;
+		wiphy_data->txpwr_total_target_mbm = UNSPECIFIED_MBM;
+		ret = 0;
+		break;
+	case NL80211_TX_POWER_LIMITED:
+		if (!phy_is_txpwr_user_mbm_valid(adapter, mbm)) {
+			RTW_WARN(FUNC_WIPHY_FMT" mbm:%d not support\n", FUNC_WIPHY_ARG(wiphy), mbm);
+			goto exit;
+		}
+		wiphy_data->txpwr_total_lmt_mbm = mbm;
+		wiphy_data->txpwr_total_target_mbm = UNSPECIFIED_MBM;
+		ret = 0;
+		break;
 	case NL80211_TX_POWER_FIXED:
-		if (mbm < 0 || (mbm % 100))
-			return -EOPNOTSUPP;
-
-		if (!test_bit(IWM_STATUS_READY, &iwm->status))
-			return 0;
-
-		ret = iwm_umac_set_config_fix(iwm, UMAC_PARAM_TBL_CFG_FIX,
-					      CFG_TX_PWR_LIMIT_USR,
-					      MBM_TO_DBM(mbm) * 2);
-		if (ret < 0)
-			return ret;
-
-		return iwm_tx_power_trigger(iwm);
+		if (!phy_is_txpwr_user_mbm_valid(adapter, mbm)) {
+			RTW_WARN(FUNC_WIPHY_FMT" mbm:%d not support\n", FUNC_WIPHY_ARG(wiphy), mbm);
+			goto exit;
+		}
+		wiphy_data->txpwr_total_lmt_mbm = UNSPECIFIED_MBM;
+		wiphy_data->txpwr_total_target_mbm = mbm;
+		ret = 0;
+		break;
 	default:
-		IWM_ERR(iwm, "Unsupported power type: %d\n", type);
-		return -EOPNOTSUPP;
+		RTW_WARN(FUNC_WIPHY_FMT" unknown type:%d\n", FUNC_WIPHY_ARG(wiphy), type);
 	}
-#endif
-	RTW_INFO("%s\n", __func__);
-	return 0;
+    // OpenHD
+    openhd_override_tx_power_mbm=get_openhd_override_tx_power_mbm();
+    if(openhd_override_tx_power_mbm){
+        wiphy_data->txpwr_total_lmt_mbm = UNSPECIFIED_MBM;
+        wiphy_data->txpwr_total_target_mbm= openhd_override_tx_power_mbm;
+        // If the chip cannot do the requested tx power, the driver just seems to set tx power index 63"
+        RTW_WARN("Using openhd_override_tx_power_mbm %d",openhd_override_tx_power_mbm);
+    }
+    RTW_WARN(FUNC_WIPHY_FMT" OpenHD cf80211 tx power %s txpwr_total_lmt_mbm:%d txpwr_total_target_mbm%d openhd_override_tx_power_mbm:%d\n", FUNC_WIPHY_ARG(wiphy)
+		, nl80211_tx_power_setting_str(type), wiphy_data->txpwr_total_lmt_mbm,wiphy_data->txpwr_total_target_mbm,
+        openhd_override_tx_power_mbm);
+
+	if (ret == 0)
+		rtw_run_in_thread_cmd_wait(adapter, ((void *)(rtw_hal_update_txpwr_level)), adapter, 2000);
+
+exit:
+	return ret;
 }
+
 
 static int cfg80211_rtw_get_txpower(struct wiphy *wiphy,
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0))
@@ -6451,6 +6486,7 @@ static int cfg80211_rtw_set_monitor_channel(struct wiphy *wiphy
 {
 	_adapter *padapter = wiphy_to_adapter(wiphy);
 	struct rtw_chan_def target_chdef = {0};
+	int openhd_override_channel=0;
 	u8 ht_option;
 	struct _ADAPTER_LINK *padapter_link = GET_PRIMARY_LINK(padapter);
 
@@ -6478,10 +6514,22 @@ static int cfg80211_rtw_set_monitor_channel(struct wiphy *wiphy
 	rtw_get_chdef_from_nl80211_channel_type(chan, channel_type,
 		&ht_option, &target_chdef);
 #endif
+	openhd_override_channel=get_openhd_override_channel();
+    if(openhd_override_channel){
+        target_chdef.chan=openhd_override_channel;
+        RTW_WARN("OpenHD: using openhd_override_channel");
+    }
+
 	RTW_INFO(FUNC_ADPT_FMT" band:%d, ch:%d, bw:%d, offset:%d\n",
 		FUNC_ADPT_ARG(padapter), target_chdef.band, target_chdef.chan,
 		target_chdef.bw, target_chdef.offset);
 
+    if(true){
+	    RTW_WARN(FUNC_ADPT_FMT" ch:%d bw:%d, offset:%d OpenHD channel debug override:%d\n",
+		FUNC_ADPT_ARG(padapter), target_chdef.band, target_chdef.chan,
+		target_chdef.bw, target_chdef.offset,openhd_override_channel);
+	}
+	
 	rtw_set_chbw_cmd(padapter, padapter_link,
 		target_chdef.band, target_chdef.chan, target_chdef.bw,
 		target_chdef.offset, RTW_CMDF_WAIT_ACK);

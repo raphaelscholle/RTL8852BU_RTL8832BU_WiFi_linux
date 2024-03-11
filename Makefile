@@ -1,3 +1,4 @@
+VERSION_HEADER = include/rtw_version.h
 EXTRA_CFLAGS += $(USER_EXTRA_CFLAGS)
 EXTRA_CFLAGS += -O1
 #EXTRA_CFLAGS += -O3
@@ -79,7 +80,7 @@ CONFIG_LOAD_PHY_PARA_FROM_FILE = n
 # Remember to set CONFIG_FILE_FWIMG when set CONFIG_FILE_FWIMG to y,
 # or driver will fail on ifconfig up because can't find firmware file
 CONFIG_FILE_FWIMG = n
-CONFIG_TXPWR_BY_RATE = n
+CONFIG_TXPWR_BY_RATE = y
 CONFIG_TXPWR_BY_RATE_EN = n
 CONFIG_TXPWR_LIMIT = y
 CONFIG_TXPWR_LIMIT_EN = n
@@ -262,13 +263,13 @@ endif
 ifeq ($(CONFIG_RTL8852A), y)
 IC_NAME := rtl8852a
 ifeq ($(CONFIG_USB_HCI), y)
-MODULE_NAME = 8852au
+MODULE_NAME = 8852au_ohd
 endif
 ifeq ($(CONFIG_PCI_HCI), y)
-MODULE_NAME = 8852ae
+MODULE_NAME = 8852ae_ohd
 endif
 ifeq ($(CONFIG_SDIO_HCI), y)
-MODULE_NAME = 8852as
+MODULE_NAME = 8852as_ohd
 endif
 
 endif
@@ -703,7 +704,7 @@ OBJS += $(_PLATFORM_FILES)
 ########### CUSTOMER ################################
 USER_MODULE_NAME ?=
 ifneq ($(USER_MODULE_NAME),)
-MODULE_NAME := $(USER_MODULE_NAME)
+MODULE_NAME := $(USER_MODULE_NAME)_ohd
 endif
 
 ############ ANDROID COMMON KERNEL ############
